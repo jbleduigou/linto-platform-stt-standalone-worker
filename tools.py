@@ -149,7 +149,74 @@ class ASR:
             raise ValueError("Decoder failed to transcribe the input audio!!!")
         else:
             return decode
+    
+    def init_decoderOnline(self):
+        self.log.info("Initiate Online Decoder")
+        self.engine = NnetLatticeFasterOnlineRecognizer(self.transition_model, self.acoustic_model, self.decoder_graph,
+                                                self.symbols, decodable_opts= self.decodable_opts, endpoint_opts=self.endpoint_opts)
+        self.feat_pipeline = OnlineNnetFeaturePipeline(self.feat_info)
+        self.engine.set_input_pipeline(self.feat_pipeline)
+        self.prev_num_frames_decoded = 0
+        self.adaptation_state = OnlineIvectorExtractorAdaptationState.from_info(self.feat_info.ivector_extractor_info)
+        self.feat_pipeline.set_adaptation_state(self.adaptation_state)
+        self.sil_weighting = OnlineSilenceWeighting(self.engine.transition_model, self.feat_info.silence_weighting_config,self.decodable_opts.frame_subsampling_factor)
+        self.engine.init_decoding()
+    
+    def decoderOnlineSil(self,samples,last_chunk):
+        data = Vector(samples)
+        if not last_chunk:
+            self.feat_pipeline.accept_waveform(self.samp_freq, data)
+            if self.sil_weighting.active():
+                self.sil_weighting.compute_current_traceback(self.engine.decoder)
+                self.feat_pipeline.ivector_feature().update_frame_weights(self.sil_weighting.get_delta_weights(self.feat_pipeline.num_frames_ready()))
+            self.engine.advance_decoding()
+            num_frames_decoded = self.engine.decoder.num_frames_decoded()
+
+            if self.engine.endpoint_detected():
+                self.log.info("silence detected")
+                self.engine.finalize_decoding()
+                out = self.engine.get_output()
+                self.feat_pipeline.get_adaptation_state(self.adaptation_state)
+                self.feat_pipeline = OnlineNnetFeaturePipeline(self.feat_info)
+                self.feat_pipeline.set_adaptation_state(self.adaptation_state)
+                self.engine.set_input_pipeline(self.feat_pipeline)
+                self.engine.init_decoding()
+                self.sil_weighting = OnlineSilenceWeighting(self.engine.transition_model, self.feat_info.silence_weighting_config,self.decodable_opts.frame_subsampling_factor)
+                self.prev_num_frames_decoded = 0
+                return out["text"], True
+            elif num_frames_decoded > self.prev_num_frames_decoded:
+                self.prev_num_frames_decoded = num_frames_decoded
+                out = self.engine.get_partial_output()
+                return out["text"], False
+        else:
+            self.feat_pipeline.input_finished()
+            self.engine.finalize_decoding()
+            if self.engine.decoder.num_frames_decoded() > 0:
+                out = self.engine.get_output()
+                return out["text"], True
+        return None, False
+
+
+    def decoderOnline(self,samples,last_chunk):
+        text = None
+        data = Vector(samples)
+        if not last_chunk:
+            self.feat_pipeline.accept_waveform(self.samp_freq, data)
+            self.engine.advance_decoding()
+            num_frames_decoded = self.engine.decoder.num_frames_decoded()
+            if num_frames_decoded > self.prev_num_frames_decoded:
+                self.prev_num_frames_decoded = num_frames_decoded
+                out = self.engine.get_partial_output()
+                text = out["text"]
+        if last_chunk:
+            self.feat_pipeline.input_finished()
+            self.engine.finalize_decoding()
+            if self.engine.decoder.num_frames_decoded() > 0:
+                out = self.engine.get_output()
+                text = out["text"]
         
+        return text, last_chunk
+    
     def wordTimestamp(self,decode):
         try:
             _fst.utils.scale_compact_lattice([[1.0, 0],[0, float(self.DECODER_ACWT)]], decode['lattice'])
@@ -489,6 +556,8 @@ class SttStandelone:
         feats = asr.compute_feat(audio)
         mfcc, ivector = asr.get_frames(feats)
         if self.spkDiarization:
+            # decode = asr.decoder(feats)
+            # spkSeg = spk.run(audio,mfcc)
             with ThreadPoolExecutor(max_workers=2) as executor:
                 thrd1 = executor.submit(asr.decoder, feats)
                 thrd2 = executor.submit(spk.run, audio, mfcc)

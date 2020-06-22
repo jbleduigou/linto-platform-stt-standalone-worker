@@ -119,12 +119,15 @@ RUN pip3 install flask flask-cors flask-swagger-ui configparser pyyaml logger li
 RUN apt-get install -y libsox-fmt-all && pip3 install git+https://github.com/rabitt/pysox.git \
     && git clone https://github.com/irebai/pyBK.git /pykaldi/tools/pyBK \
     && cp /pykaldi/tools/pyBK/diarizationFunctions.py .
+RUN pip3 install flask-socketio
 
 # Set environment variables
 ENV PATH /pykaldi/tools/kaldi/egs/wsj/s5/utils/:$PATH
 
+RUN mkdir templates
 COPY tools.py .
 COPY run.py .
+COPY index.html templates/
 
 EXPOSE 80
 
