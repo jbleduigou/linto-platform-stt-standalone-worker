@@ -50,7 +50,7 @@ pipeline {
 
         stage('Docker build for pykaldi (unstable) branch'){
             when{
-                branch 'pykaldi'
+                branch 'online'
             }
             steps {
                 echo 'Publishing new Feature branch'
@@ -61,7 +61,7 @@ pipeline {
                         script: "awk -v RS='' '/#/ {print; exit}' RELEASE.md | head -1 | sed 's/#//' | sed 's/ //'"
                     ).trim()
                     docker.withRegistry('https://registry.hub.docker.com', env.DOCKER_HUB_CRED) {
-                        image.push('pykaldi')
+                        image.push('online')
                     }
                 }
             }

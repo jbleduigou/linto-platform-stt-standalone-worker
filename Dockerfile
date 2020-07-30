@@ -115,20 +115,20 @@ RUN git clone --depth 1 https://github.com/pykaldi/pykaldi.git /pykaldi \
 WORKDIR /usr/src/speech-to-text
 
 # Install main service packages
-RUN pip3 install flask flask-cors flask-swagger-ui configparser pyyaml logger librosa webrtcvad scipy sklearn
+RUN pip3 install configparser pyyaml logger librosa webrtcvad scipy sklearn
 RUN apt-get install -y libsox-fmt-all && pip3 install git+https://github.com/rabitt/pysox.git \
     && git clone https://github.com/irebai/pyBK.git /pykaldi/tools/pyBK \
     && cp /pykaldi/tools/pyBK/diarizationFunctions.py .
-RUN pip3 install flask-socketio
+RUN pip3 install websockets
 
 # Set environment variables
 ENV PATH /pykaldi/tools/kaldi/egs/wsj/s5/utils/:$PATH
 
 RUN mkdir templates
 COPY tools.py .
-COPY run.py .
+COPY run_websocket.py .
 COPY index.html templates/
 
 EXPOSE 80
 
-CMD python3 ./run.py
+CMD python3 ./run_websocket.py

@@ -150,10 +150,35 @@ class ASR:
         else:
             return decode
     
-    def init_decoderOnline(self):
+    def wordTimestamp(self,decode):
+        try:
+            _fst.utils.scale_compact_lattice([[1.0, 0],[0, float(self.DECODER_ACWT)]], decode['lattice'])
+            bestPath = compact_lattice_shortest_path(decode['lattice'])
+            _fst.utils.scale_compact_lattice([[1.0, 0],[0, 1.0/float(self.DECODER_ACWT)]], bestPath)
+            bestLattice = word_align_lattice(bestPath, self.transition_model, self.info, 0)
+            alignment = compact_lattice_to_word_alignment(bestLattice[1])
+            words = _fst.indices_to_symbols(self.symbols, alignment[0])
+        except Exception as e:
+            self.log.error(e)
+            raise ValueError("Decoder failed to create the word timestamps!!!")
+        else:
+            return {
+                "words":words,
+                "start":alignment[1],
+                "dur":alignment[2]
+            }
+
+
+class ASROnline:
+    def __init__(self,asr):
+        self.log = logging.getLogger('__stt-standelone-worker__.ASROnline')
         self.log.info("Initiate Online Decoder")
-        self.engine = NnetLatticeFasterOnlineRecognizer(self.transition_model, self.acoustic_model, self.decoder_graph,
-                                                self.symbols, decodable_opts= self.decodable_opts, endpoint_opts=self.endpoint_opts)
+        self.samp_freq = asr.samp_freq
+        self.feat_info = asr.feat_info
+        self.decodable_opts = asr.decodable_opts
+        self.endpoint_opts=asr.endpoint_opts
+        self.engine = NnetLatticeFasterOnlineRecognizer(asr.transition_model, asr.acoustic_model, asr.decoder_graph,
+                                                asr.symbols, decodable_opts=self.decodable_opts , endpoint_opts=self.endpoint_opts)
         self.feat_pipeline = OnlineNnetFeaturePipeline(self.feat_info)
         self.engine.set_input_pipeline(self.feat_pipeline)
         self.prev_num_frames_decoded = 0
@@ -163,9 +188,15 @@ class ASR:
         self.engine.init_decoding()
     
     def decoderOnlineSil(self,samples,last_chunk):
-        data = Vector(samples)
         if not last_chunk:
+            audio = samples.split(b' ')
+            wav = np.frombuffer(samples, dtype=np.int16)
+            if b'RIFF' in audio[0]:
+                wav = wav[22:]
+            data = Vector(wav)
+
             self.feat_pipeline.accept_waveform(self.samp_freq, data)
+
             if self.sil_weighting.active():
                 self.sil_weighting.compute_current_traceback(self.engine.decoder)
                 self.feat_pipeline.ivector_feature().update_frame_weights(self.sil_weighting.get_delta_weights(self.feat_pipeline.num_frames_ready()))
@@ -190,17 +221,21 @@ class ASR:
                 return out["text"], False
         else:
             self.feat_pipeline.input_finished()
+            self.engine.advance_decoding()
             self.engine.finalize_decoding()
             if self.engine.decoder.num_frames_decoded() > 0:
                 out = self.engine.get_output()
                 return out["text"], True
-        return None, False
-
+        return '', False
 
     def decoderOnline(self,samples,last_chunk):
         text = None
-        data = Vector(samples)
         if not last_chunk:
+            audio = samples.split(b' ')
+            wav = np.frombuffer(samples, dtype=np.int16)
+            if b'RIFF' in audio[0]:
+                wav = wav[22:]
+            data = Vector(wav)
             self.feat_pipeline.accept_waveform(self.samp_freq, data)
             self.engine.advance_decoding()
             num_frames_decoded = self.engine.decoder.num_frames_decoded()
@@ -210,6 +245,7 @@ class ASR:
                 text = out["text"]
         if last_chunk:
             self.feat_pipeline.input_finished()
+            self.engine.advance_decoding()
             self.engine.finalize_decoding()
             if self.engine.decoder.num_frames_decoded() > 0:
                 out = self.engine.get_output()
@@ -217,23 +253,6 @@ class ASR:
         
         return text, last_chunk
     
-    def wordTimestamp(self,decode):
-        try:
-            _fst.utils.scale_compact_lattice([[1.0, 0],[0, float(self.DECODER_ACWT)]], decode['lattice'])
-            bestPath = compact_lattice_shortest_path(decode['lattice'])
-            _fst.utils.scale_compact_lattice([[1.0, 0],[0, 1.0/float(self.DECODER_ACWT)]], bestPath)
-            bestLattice = word_align_lattice(bestPath, self.transition_model, self.info, 0)
-            alignment = compact_lattice_to_word_alignment(bestLattice[1])
-            words = _fst.indices_to_symbols(self.symbols, alignment[0])
-        except Exception as e:
-            self.log.error(e)
-            raise ValueError("Decoder failed to create the word timestamps!!!")
-        else:
-            return {
-                "words":words,
-                "start":alignment[1],
-                "dur":alignment[2]
-            }
 
 class SpeakerDiarization:
     def __init__(self):
