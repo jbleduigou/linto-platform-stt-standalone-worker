@@ -124,10 +124,8 @@ RUN pip3 install websockets
 # Set environment variables
 ENV PATH /pykaldi/tools/kaldi/egs/wsj/s5/utils/:$PATH
 
-RUN mkdir templates
 COPY tools.py .
 COPY run_websocket.py .
-COPY index.html templates/
 
 EXPOSE 80
 
